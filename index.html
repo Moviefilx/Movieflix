@@ -19,7 +19,7 @@
 </head>
 <body class="text-white">
 
-    <!-- Header Section -->
+    <!-- HTML Structure is same as before -->
     <header class="bg-gray-900/80 backdrop-blur-sm sticky top-0 z-40 shadow-lg"><nav class="container mx-auto px-6 py-4 flex justify-between items-center"><div class="text-2xl font-bold text-red-600 tracking-wider cursor-pointer" id="main-logo"><i class="fas fa-film mr-2"></i>MovieFlix</div><div><button id="admin-login-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300"><i class="fas fa-user-shield mr-2"></i>Admin Login</button><button id="home-btn" class="hidden bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300"><i class="fas fa-home mr-2"></i>Home</button></div></nav></header>
     <main class="container mx-auto px-6 py-8">
         <div id="user-view">
@@ -27,9 +27,8 @@
             
             <!-- Error Message View -->
             <div id="server-error-view" class="hidden text-center bg-red-900/50 border border-red-700 p-8 rounded-lg">
-                <h2 class="text-2xl font-bold text-red-400 mb-4"><i class="fas fa-server mr-2"></i> Connection Error</h2>
-                <p class="text-gray-300">Backend server se connect nahi ho pa raha hai.</p>
-                <p class="text-gray-400 mt-2 text-sm">Kripya-kar ke-sunishchit-karein ki-aapka `server.js` terminal mein `node server.js` command se chal raha hai.</p>
+                <h2 class="text-2xl font-bold text-red-400 mb-4"><i class="fas fa-server mr-2"></i> Server Connection Error</h2>
+                <div id="server-error-message" class="text-gray-300"></div>
             </div>
             
             <h1 id="page-title" class="text-3xl font-bold mb-8 border-l-4 border-red-600 pl-4">Latest Movies</h1>
@@ -75,6 +74,8 @@
             const pageTitle = document.getElementById('page-title');
             const clearAllDataBtn = document.getElementById('clear-all-data-btn');
             const serverErrorView = document.getElementById('server-error-view');
+            const serverErrorMessage = document.getElementById('server-error-message');
+
 
             // Video Player Elements
             const videoContainer = document.getElementById('video-container');
@@ -103,54 +104,88 @@
             
             // --- App State & Constants --- //
             const ADMIN_PASSWORD = 'Rohit1510'; 
+            const API_BASE_URL = 'https://movieflix-3a7p.onrender.com';
             const AVAILABLE_QUALITIES = ['1080', '720', '480', '360', '240', '144'];
-            let uploadedFiles = {}; 
+            let allMoviesCache = [];
             let currentlyPlayingMovieId = null;
 
-            // --- Main Functions (Reverted to localStorage) ---
-            function getMovies() { return JSON.parse(localStorage.getItem('movies') || '[]'); }
-            function saveMovies(movies) { localStorage.setItem('movies', JSON.stringify(movies)); }
-            
-            function generateFileInputs() {
-                const container = document.getElementById('file-inputs-container');
-                container.innerHTML = '';
-                AVAILABLE_QUALITIES.forEach(q => {
-                    const inputDiv = document.createElement('div');
-                    inputDiv.className = 'grid grid-cols-1 md:grid-cols-2 gap-4 items-center';
-                    inputDiv.innerHTML = `
-                        <div>
-                            <label for="movie-file-${q}" class="block mb-1 text-sm font-medium text-gray-400">${q}p File (for Streaming)</label>
-                            <input type="file" id="movie-file-${q}" data-quality="${q}" accept="video/*" class="movie-file-input w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-gray-600 file:text-white hover:file:bg-gray-500">
-                        </div>
-                         <div>
-                            <label for="movie-link-${q}" class="block mb-1 text-sm font-medium text-gray-400">${q}p Download Link</label>
-                            <input type="url" id="movie-link-${q}" data-quality="${q}" placeholder="https://example.com/download.mp4" class="movie-link-input w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm">
-                        </div>
-                    `;
-                    container.appendChild(inputDiv);
-                });
+            // --- API Functions ---
+            async function getMoviesFromServer() {
+                try {
+                    serverErrorView.classList.add('hidden');
+                    movieGrid.classList.remove('hidden');
+
+                    const response = await fetch(`${API_BASE_URL}/movies`);
+                    if (!response.ok) {
+                        const errorData = {
+                            status: response.status,
+                            statusText: response.statusText,
+                        }
+                        throw new Error(JSON.stringify(errorData));
+                    }
+                    allMoviesCache = await response.json();
+                } catch (error) {
+                    console.error('Failed to fetch movies:', error.message);
+                    
+                    let status = 'Unknown';
+                    try {
+                       const parsedError = JSON.parse(error.message);
+                       status = parsedError.status;
+                    } catch(e) {
+                        // Could not parse, it's a generic fetch error
+                    }
+                    
+                    const errorMessageDiv = document.getElementById('server-error-message');
+                    if (status === 500) {
+                        errorMessageDiv.innerHTML = `Backend server par ek 'Internal Server Error (500)' aa raha hai.<br> Iska matlab hai ki server ke code mein ya uske configuration mein koi samasya hai.<br><strong class="text-yellow-400 mt-2 block">Action:</strong> Kripya Render par jaakar apne Environment Variables (khaas kar ke FIREBASE_CREDENTIALS aur Cloudinary keys) check karein.`;
+                    } else {
+                        errorMessageDiv.innerHTML = `Backend server se connect nahi ho pa raha hai.<br>
+                        <strong class="text-yellow-400 mt-2 block">Action:</strong> Sunishchit karein ki aapka Render server "Deployed" state mein hai aur crash nahi hua hai. URL (` + API_BASE_URL + `) bhi check karein.`;
+                    }
+
+                    serverErrorView.classList.remove('hidden');
+                    movieGrid.classList.add('hidden');
+                }
             }
 
+            async function addMovieToServer(formData) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/movies`, {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(errorText || 'Unknown server error');
+                    }
+                    return await response.json();
+                } catch (error) {
+                    console.error('Failed to add movie:', error.message);
+                    alert(`Movie upload failed: ${error.message}`);
+                }
+            }
+            
+            async function deleteMovieFromServer(movieId) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/movies/${movieId}`, {
+                        method: 'DELETE',
+                    });
+                    if (!response.ok) throw new Error('Failed to delete movie');
+                    return true;
+                } catch (error) {
+                    console.error('Failed to delete movie:', error);
+                    return false;
+                }
+            }
+            
+            // --- Render & UI Functions ---
             function renderMovies(filterCategory = 'All', searchTerm = '') {
-                let allMovies = getMovies();
-                let moviesToRender;
+                let moviesToRender = allMoviesCache;
+                if (filterCategory !== 'All') moviesToRender = moviesToRender.filter(m => m.category === filterCategory);
+                if (searchTerm) moviesToRender = moviesToRender.filter(m => m.title.toLowerCase().includes(searchTerm.toLowerCase()));
 
-                if (filterCategory === 'All') {
-                    moviesToRender = allMovies;
-                    pageTitle.textContent = "Latest Movies";
-                } else {
-                    moviesToRender = allMovies.filter(movie => movie.category === filterCategory);
-                    pageTitle.textContent = filterCategory;
-                }
-                
-                if (searchTerm) {
-                    moviesToRender = moviesToRender.filter(movie => movie.title.toLowerCase().includes(searchTerm.toLowerCase()));
-                    pageTitle.textContent = `Searching for "${searchTerm}"`;
-                }
-
-                document.querySelectorAll('.nav-category').forEach(link => {
-                    link.classList.toggle('active', link.dataset.category === filterCategory && !searchTerm);
-                });
+                pageTitle.textContent = searchTerm ? `Searching for "${searchTerm}"` : (filterCategory === 'All' ? "Latest Movies" : filterCategory);
+                document.querySelectorAll('.nav-category').forEach(link => link.classList.toggle('active', link.dataset.category === filterCategory && !searchTerm));
 
                 movieGrid.innerHTML = moviesToRender.length === 0 
                     ? `<p class="col-span-full text-center text-gray-400">Is criteria mein koi movie nahi mili.</p>`
@@ -176,10 +211,9 @@
             }
             
             function renderAdminMovieList() {
-                const movies = getMovies();
-                adminMovieList.innerHTML = movies.length === 0
+                adminMovieList.innerHTML = allMoviesCache.length === 0
                     ? `<p class="bg-gray-800 p-4 rounded-lg text-center text-gray-400">Abhi koi movie manage karne ke liye nahi hai.</p>`
-                    : movies.map(movie => `<div class="bg-gray-900/50 p-4 rounded-lg flex items-center justify-between hover:bg-gray-700/50 transition-colors duration-300"><div class="flex items-center gap-4 flex-1 min-w-0"><img src="${movie.posterUrl}" class="w-16 h-24 object-cover rounded-md flex-shrink-0"><div class="min-w-0"><h4 class="font-bold text-lg truncate">${movie.title}</h4><p class="text-sm text-gray-400 truncate">Category: ${movie.category || 'N/A'}</p></div></div><div class="flex gap-3 flex-shrink-0"><button class="edit-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition" data-id="${movie.id}"><i class="fas fa-edit"></i></button><button class="delete-btn bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition" data-id="${movie.id}"><i class="fas fa-trash"></i></button></div></div>`).join('');
+                    : allMoviesCache.map(movie => `<div class="bg-gray-900/50 p-4 rounded-lg flex items-center justify-between hover:bg-gray-700/50 transition-colors duration-300"><div class="flex items-center gap-4 flex-1 min-w-0"><img src="${movie.posterUrl}" class="w-16 h-24 object-cover rounded-md flex-shrink-0"><div class="min-w-0"><h4 class="font-bold text-lg truncate">${movie.title}</h4><p class="text-sm text-gray-400 truncate">Category: ${movie.category || 'N/A'}</p></div></div><div class="flex gap-3 flex-shrink-0"><button class="edit-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition" data-id="${movie.id}"><i class="fas fa-edit"></i></button><button class="delete-btn bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition" data-id="${movie.id}"><i class="fas fa-trash"></i></button></div></div>`).join('');
                 addAdminButtonListeners();
             }
 
@@ -188,19 +222,20 @@
                 document.querySelectorAll('.edit-btn').forEach(button => button.addEventListener('click', (e) => editMovie(e.currentTarget.dataset.id)));
             }
             
-            function deleteMovie(id) {
-                 showConfirmDialog('Kya aap sach mein is movie ko delete karna chahte hain?', () => {
-                    let movies = getMovies().filter(movie => movie.id != id);
-                    saveMovies(movies);
-                    if (uploadedFiles[id]) delete uploadedFiles[id];
-                    renderMovies();
-                    renderAdminMovieList();
-                    alert('Movie safaltapoorvak delete ho gayi!');
+            async function deleteMovie(id) {
+                 showConfirmDialog('Kya aap sach mein is movie ko delete karna chahte hain?', async () => {
+                    const success = await deleteMovieFromServer(id);
+                    if (success) {
+                        await getMoviesFromServer();
+                        renderMovies();
+                        renderAdminMovieList();
+                        alert('Movie safaltapoorvak delete ho gayi!');
+                    }
                 });
             }
 
             function editMovie(id) {
-                const movieToEdit = getMovies().find(movie => movie.id == id);
+                const movieToEdit = allMoviesCache.find(movie => movie.id == id);
                 if (movieToEdit) {
                     const form = document.getElementById('upload-form');
                     form.querySelector('#movie-id').value = movieToEdit.id;
@@ -224,7 +259,7 @@
             }
 
             function playMovie(id) {
-                const movieToPlay = getMovies().find(movie => movie.id == id);
+                const movieToPlay = allMoviesCache.find(movie => movie.id == id);
                 if (movieToPlay && movieToPlay.videoSources) {
                     currentlyPlayingMovieId = id;
                     showView('player');
@@ -238,7 +273,7 @@
                     } else {
                          videoPlayer.src = ''; 
                          qualityMenu.innerHTML = '';
-                         alert("Is movie ke liye koi video source available nahi hai. Page refresh hone par files chali jaati hain.");
+                         alert("Is movie ke liye koi video source available nahi hai.");
                     }
                 } else {
                     alert("Video sources nahi mile.");
@@ -246,7 +281,7 @@
             }
 
             function openDownloadModal(id) {
-                const movieToDownload = getMovies().find(movie => movie.id == id);
+                const movieToDownload = allMoviesCache.find(movie => movie.id == id);
                 if (movieToDownload && movieToDownload.downloadLinks) {
                     downloadModalTitle.textContent = `Download: ${movieToDownload.title}`;
                     downloadLinksContainer.innerHTML = '';
@@ -282,26 +317,44 @@
             }
             
             function setVideoSource(quality) {
-                const sourceFile = uploadedFiles[currentlyPlayingMovieId]?.[quality];
-                if (sourceFile) {
+                const movie = allMoviesCache.find(m => m.id === currentlyPlayingMovieId);
+                const sourceUrl = movie?.videoSources?.[quality]?.url;
+                if (sourceUrl) {
                     const currentTime = videoPlayer.currentTime;
                     const isPaused = videoPlayer.paused;
-                    const videoUrl = URL.createObjectURL(sourceFile);
-                    videoPlayer.src = videoUrl;
+                    videoPlayer.src = sourceUrl;
                     videoPlayer.addEventListener('loadedmetadata', () => {
                          videoPlayer.currentTime = currentTime;
                          if (!isPaused) videoPlayer.play();
                     }, { once: true });
                     document.querySelectorAll('.quality-option').forEach(btn => btn.classList.toggle('active', btn.dataset.quality === quality));
-                } else {
-                    alert(`Video file for ${quality}p quality is not available in this session. Please upload the movie again.`);
                 }
             }
             
             function populateQualityMenu(qualities, activeQuality) {
                 qualityMenu.innerHTML = '<h4 class="text-xs text-gray-400 px-3 pb-1 border-b border-gray-700">Quality</h4>';
                 qualities.sort((a,b) => parseInt(b) - parseInt(a)).forEach(q => {
-                    qualityMenu.innerHTML += `<button class="quality-option w-full text-left px-3 py-1 text-sm hover:bg-red-600 ${q === activeQuality ? 'active' : ''}" data-quality="${q}">${q}p</button>`;
+                    qualityMenu.innerHTML += `<button class="quality-option w-full text-left px-3 py-1 text-sm hover:bg-red-600 ${q === activeQuality ? 'active' : ''}" data-quality="${q}">${q}</button>`;
+                });
+            }
+            
+            function generateFileInputs() {
+                const container = document.getElementById('file-inputs-container');
+                container.innerHTML = '';
+                AVAILABLE_QUALITIES.forEach(q => {
+                    const inputDiv = document.createElement('div');
+                    inputDiv.className = 'grid grid-cols-1 md:grid-cols-2 gap-4 items-center';
+                    inputDiv.innerHTML = `
+                        <div>
+                            <label for="movie-file-${q}" class="block mb-1 text-sm font-medium text-gray-400">${q}p File (for Streaming)</label>
+                            <input type="file" id="movie-file-${q}" data-quality="${q}" accept="video/*" class="movie-file-input w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-gray-600 file:text-white hover:file:bg-gray-500">
+                        </div>
+                         <div>
+                            <label for="movie-link-${q}" class="block mb-1 text-sm font-medium text-gray-400">${q}p Download Link</label>
+                            <input type="url" id="movie-link-${q}" data-quality="${q}" placeholder="https://example.com/download.mp4" class="movie-link-input w-full bg-gray-700 border border-gray-600 rounded-lg p-2.5 text-sm">
+                        </div>
+                    `;
+                    container.appendChild(inputDiv);
                 });
             }
 
@@ -345,65 +398,44 @@
             });
             loginForm.addEventListener('submit', (e) => { e.preventDefault(); if (document.getElementById('password').value === ADMIN_PASSWORD) { showView('admin'); renderAdminMovieList(); loginForm.reset(); } else { document.getElementById('login-error').classList.remove('hidden'); } });
             
-            uploadForm.addEventListener('submit', (e) => {
+            uploadForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
-                const movies = getMovies();
-                const movieId = document.getElementById('movie-id').value;
-
-                const movieData = { 
-                    title: document.getElementById('movie-title').value, 
-                    description: document.getElementById('movie-desc').value, 
-                    posterUrl: document.getElementById('movie-poster').value,
-                    category: document.getElementById('movie-category').value,
-                    videoSources: {},
-                    downloadLinks: {}
-                };
-
+                const formData = new FormData();
+                formData.append('title', document.getElementById('movie-title').value);
+                formData.append('description', document.getElementById('movie-desc').value);
+                formData.append('posterUrl', document.getElementById('movie-poster').value);
+                formData.append('category', document.getElementById('movie-category').value);
+                
                 let fileOrLinkProvided = false;
                 document.querySelectorAll('.movie-file-input').forEach(input => {
                     const quality = input.dataset.quality;
                     const linkInput = document.getElementById(`movie-link-${quality}`);
-                    const file = input.files[0];
-                    const link = linkInput.value.trim();
-
-                    if (file) {
+                    if (input.files[0]) {
                         fileOrLinkProvided = true;
-                        if(!uploadedFiles[movieId || 'new']) uploadedFiles[movieId || 'new'] = {};
-                        uploadedFiles[movieId || 'new'][quality] = file;
-                        movieData.videoSources[quality] = { name: file.name };
+                        formData.append(`video-${quality}`, input.files[0]);
                     }
-                    if (link) {
+                     if (linkInput && linkInput.value.trim()) {
                         fileOrLinkProvided = true;
-                        movieData.downloadLinks[quality] = link;
+                        formData.append(`downloadLink-${quality}`, linkInput.value.trim());
                     }
                 });
-
-                if (!fileOrLinkProvided) return alert('Kripya kam se kam ek video file ya download link provide karein.');
                 
-                if (movieId) { // Update mode
-                    const movieIndex = movies.findIndex(m => m.id == movieId);
-                    if (movieIndex > -1) {
-                         movies[movieIndex] = { ...movies[movieIndex], ...movieData, id: movieId };
-                         if (uploadedFiles['new']) {
-                             uploadedFiles[movieId] = { ...uploadedFiles[movieId], ...uploadedFiles['new'] };
-                             delete uploadedFiles['new'];
-                         }
-                        alert('Movie update ho gayi!');
-                    }
-                } else { // Add new mode
-                    const newMovie = { ...movieData, id: Date.now() };
-                    if (uploadedFiles['new']) {
-                         uploadedFiles[newMovie.id] = uploadedFiles['new'];
-                         delete uploadedFiles['new'];
-                    }
-                    movies.unshift(newMovie);
+                if (!fileOrLinkProvided) return alert('Kripya kam se kam ek video file ya download link provide karein.');
+
+                const uploadBtn = document.getElementById('upload-btn');
+                uploadBtn.disabled = true;
+                uploadBtn.innerHTML = 'Uploading...';
+
+                const addedMovie = await addMovieToServer(formData);
+                if (addedMovie) {
+                    await getMoviesFromServer();
+                    renderMovies();
+                    renderAdminMovieList();
+                    uploadForm.reset();
                     alert('Movie safaltapoorvak upload ho gayi!');
                 }
-                
-                saveMovies(movies);
-                uploadForm.reset();
-                renderMovies();
-                renderAdminMovieList();
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = '<i class="fas fa-upload mr-2"></i>Upload Movie';
             });
             
             document.getElementById('cancel-edit-btn').addEventListener('click', () => {
@@ -412,13 +444,15 @@
                 document.getElementById('form-title').textContent = 'Nayi Movie Upload Karein';
                 document.getElementById('upload-btn').innerHTML = `<i class="fas fa-upload mr-2"></i>Upload Movie`;
                 document.getElementById('cancel-edit-btn').classList.add('hidden');
-                document.getElementById('current-files-list').classList.add('hidden');
             });
 
             clearAllDataBtn.addEventListener('click', () => {
-                showConfirmDialog('Kya aap sach mein saara data erase karna chahte hain? Yeh action undo nahi kiya ja sakta.', () => {
-                    localStorage.removeItem('movies');
-                    uploadedFiles = {};
+                showConfirmDialog('Kya aap sach mein saara data erase karna chahte hain? Yeh action undo nahi kiya ja sakta.', async () => {
+                    const movies = allMoviesCache;
+                    for(const movie of movies) {
+                       await deleteMovieFromServer(movie.id);
+                    }
+                    await getMoviesFromServer();
                     renderMovies();
                     renderAdminMovieList();
                     alert('Saara data safaltapoorvak erase ho gaya hai.');
@@ -448,11 +482,30 @@
             downloadModalCloseBtn.addEventListener('click', closeDownloadModal);
             
             // Player listeners
-            const formatTime=(t)=>{if(isNaN(t))return'00:00';const m=Math.floor(t/60),s=Math.floor(t%60);return`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`};videoPlayer.addEventListener('loadeddata',()=>{totalDurationEl.textContent=formatTime(videoPlayer.duration)});videoPlayer.addEventListener('timeupdate',()=>{seekBar.value=videoPlayer.currentTime;currentTimeEl.textContent=formatTime(videoPlayer.currentTime)});videoPlayer.addEventListener('play',()=>{playPauseBtn.innerHTML='<i class="fas fa-pause"></i>';videoContainer.classList.remove('paused')});videoPlayer.addEventListener('pause',()=>{playPauseBtn.innerHTML='<i class="fas fa-play"></i>';videoContainer.classList.add('paused')});const togglePlay=()=>videoPlayer.paused?videoPlayer.play():videoPlayer.pause();playPauseBtn.addEventListener('click',togglePlay);videoPlayer.addEventListener('click',togglePlay);seekBar.addEventListener('input',()=>videoPlayer.currentTime=seekBar.value);videoPlayer.addEventListener('loadedmetadata',()=>seekBar.max=videoPlayer.duration);volumeBtn.addEventListener('click',()=>{videoPlayer.muted=!videoPlayer.muted;volumeBtn.innerHTML=`<i class="fas ${videoPlayer.muted?'fa-volume-mute':'fa-volume-up'}"></i>`;volumeBar.value=videoPlayer.muted?0:videoPlayer.volume});volumeBar.addEventListener('input',(e)=>{videoPlayer.volume=e.target.value;videoPlayer.muted=e.target.value==0;volumeBtn.innerHTML=`<i class="fas ${videoPlayer.muted?'fa-volume-mute':'fa-volume-up'}"></i>`});fullscreenBtn.addEventListener('click',()=>{try{if(!document.fullscreenElement)videoContainer.requestFullscreen();else document.exitFullscreen()}catch(e){console.warn("Fullscreen API error:",e.message)}});document.addEventListener('fullscreenchange',()=>{fullscreenBtn.innerHTML=`<i class="fas ${document.fullscreenElement?'fa-compress':'fa-expand'}"></i>`});pipBtn.addEventListener('click',()=>{try{if(document.pictureInPictureElement)document.exitPictureInPicture();else if(document.pictureInPictureEnabled)videoPlayer.requestPictureInPicture()}catch(e){console.warn("PiP API error:",e.message)}});settingsBtn.addEventListener('click',(e)=>{e.stopPropagation();qualityMenu.classList.toggle('hidden')});document.addEventListener('click',()=>{if(!qualityMenu.classList.contains('hidden'))qualityMenu.classList.add('hidden')});qualityMenu.addEventListener('click',(e)=>{if(e.target.closest('.quality-option'))setVideoSource(e.target.closest('.quality-option').dataset.quality.replace('p',''))});document.getElementById('confirm-ok-btn').addEventListener('click',()=>{if(confirmCallback)confirmCallback();hideConfirmDialog()});document.getElementById('confirm-cancel-btn').addEventListener('click',hideConfirmDialog);
+            const formatTime = (t) => { if(isNaN(t)) return '00:00'; const m = Math.floor(t/60), s = Math.floor(t%60); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` };
+            videoPlayer.addEventListener('loadeddata', () => { totalDurationEl.textContent = formatTime(videoPlayer.duration); seekBar.max = videoPlayer.duration; });
+            videoPlayer.addEventListener('timeupdate', () => { seekBar.value = videoPlayer.currentTime; currentTimeEl.textContent = formatTime(videoPlayer.currentTime); });
+            videoPlayer.addEventListener('play', () => { playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>'; videoContainer.classList.remove('paused'); });
+            videoPlayer.addEventListener('pause', () => { playPauseBtn.innerHTML = '<i class="fas fa-play"></i>'; videoContainer.classList.add('paused'); });
+            const togglePlay = () => videoPlayer.paused ? videoPlayer.play() : videoPlayer.pause();
+            playPauseBtn.addEventListener('click', togglePlay);
+            videoPlayer.addEventListener('click', togglePlay);
+            seekBar.addEventListener('input', () => videoPlayer.currentTime = seekBar.value);
+            volumeBtn.addEventListener('click', () => { videoPlayer.muted = !videoPlayer.muted; volumeBtn.innerHTML = `<i class="fas ${videoPlayer.muted ? 'fa-volume-mute' : 'fa-volume-up'}"></i>`; volumeBar.value = videoPlayer.muted ? 0 : videoPlayer.volume; });
+            volumeBar.addEventListener('input', (e) => { videoPlayer.volume = e.target.value; videoPlayer.muted = e.target.value == 0; volumeBtn.innerHTML = `<i class="fas ${videoPlayer.muted ? 'fa-volume-mute' : 'fa-volume-up'}"></i>`; });
+            fullscreenBtn.addEventListener('click', () => { try { if (!document.fullscreenElement) videoContainer.requestFullscreen(); else document.exitFullscreen(); } catch (e) { console.warn("Fullscreen API error:", e.message); } });
+            document.addEventListener('fullscreenchange', () => { fullscreenBtn.innerHTML = `<i class="fas ${document.fullscreenElement ? 'fa-compress' : 'fa-expand'}"></i>`; });
+            pipBtn.addEventListener('click', () => { try { if (document.pictureInPictureElement) document.exitPictureInPicture(); else if (document.pictureInPictureEnabled) videoPlayer.requestPictureInPicture(); } catch (e) { console.warn("PiP API error:", e.message); } });
+            settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); qualityMenu.classList.toggle('hidden'); });
+            document.addEventListener('click', () => { if (!qualityMenu.classList.contains('hidden')) qualityMenu.classList.add('hidden'); });
+            qualityMenu.addEventListener('click', (e) => { if (e.target.closest('.quality-option')) setVideoSource(e.target.closest('.quality-option').dataset.quality); });
+            document.getElementById('confirm-ok-btn').addEventListener('click', () => { if (confirmCallback) confirmCallback(); hideConfirmDialog(); });
+            document.getElementById('confirm-cancel-btn').addEventListener('click', hideConfirmDialog);
 
             // --- Initial App Load ---
-            function initializeApp() {
+            async function initializeApp() {
                 generateFileInputs();
+                await getMoviesFromServer();
                 renderMovies();
                 showView('user');
             }

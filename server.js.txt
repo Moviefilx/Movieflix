@@ -1,0 +1,143 @@
+// --- Backend Server (server.js) ---
+// Is file ko 'server.js' naam se save karein.
+
+// 1. Zaroori libraries ko import karein
+const express = require('express');
+const cors = require('cors');
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+const multer = require('multer');
+const { v2: cloudinary } = require('cloudinary');
+
+// 2. Configurations
+// Yeh file aapko Firebase se milegi.
+const serviceAccount = require('./serviceAccountKey.json');
+
+// Cloudinary Configuration - Apni keys yahan daalein
+cloudinary.config({ 
+  cloud_name: 'YOUR_CLOUD_NAME', 
+  api_key: 'YOUR_API_KEY', 
+  api_secret: 'YOUR_API_SECRET' 
+});
+
+// 3. App aur Database Initialization
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+initializeApp({
+  credential: cert(serviceAccount)
+});
+
+const db = getFirestore();
+
+// Multer (File upload handler) setup
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
+
+// --- API Routes ---
+
+// Route 1: Saari movies ko get karne ke liye
+app.get('/movies', async (req, res) => {
+    try {
+        const moviesRef = db.collection('movies');
+        const snapshot = await moviesRef.orderBy('createdAt', 'desc').get();
+        if (snapshot.empty) return res.status(200).json([]);
+        let movies = [];
+        snapshot.forEach(doc => movies.push({ id: doc.id, ...doc.data() }));
+        res.status(200).json(movies);
+    } catch (error) {
+        console.error("Error getting movies: ", error);
+        res.status(500).send("Server par movies get karte samay error aayi.");
+    }
+});
+
+// Route 2: Nayi movie ko upload aur database mein add karne ke liye
+// Hum 'any()' ka istemal kar rahe hain taaki multiple files le sakein
+app.post('/movies', upload.any(), async (req, res) => {
+    try {
+        const { title, category, description, posterUrl } = req.body;
+        const files = req.files;
+
+        if (!title || !category || !posterUrl || !files || files.length === 0) {
+            return res.status(400).send("Zaroori data (title, category, posterUrl, video files) missing hai.");
+        }
+
+        // Sabhi files ko Cloudinary par upload karein
+        const uploadPromises = files.map(file => {
+            return new Promise((resolve, reject) => {
+                const quality = file.fieldname.split('-')[1]; // 'video-1080p' se '1080p' nikaalein
+                const uploadStream = cloudinary.uploader.upload_stream(
+                    { resource_type: "video", folder: "movies" },
+                    (error, result) => {
+                        if (error) reject(error);
+                        else resolve({ quality: quality, url: result.secure_url, public_id: result.public_id });
+                    }
+                );
+                uploadStream.end(file.buffer);
+            });
+        });
+
+        const uploadResults = await Promise.all(uploadPromises);
+        
+        const videoSources = {};
+        uploadResults.forEach(result => {
+            videoSources[result.quality] = {
+                url: result.url,
+                public_id: result.public_id
+            };
+        });
+
+        const movieToAdd = {
+            title,
+            category,
+            description,
+            posterUrl,
+            videoSources, // Cloudinary URLs ko yahan save karein
+            createdAt: new Date().toISOString()
+        };
+        
+        const docRef = await db.collection('movies').add(movieToAdd);
+        res.status(201).json({ id: docRef.id, ...movieToAdd });
+
+    } catch (error) {
+        console.error("Error adding movie: ", error);
+        res.status(500).send("Server par movie add karte samay error aayi.");
+    }
+});
+
+// Route 3: Movie ko delete karne ke liye (Database aur Cloudinary se)
+app.delete('/movies/:id', async (req, res) => {
+    try {
+        const movieId = req.params.id;
+        const movieRef = db.collection('movies').doc(movieId);
+        const doc = await movieRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).send("Movie nahi mili.");
+        }
+        
+        // Cloudinary se video files delete karein
+        const videoSources = doc.data().videoSources;
+        if (videoSources) {
+            const publicIds = Object.values(videoSources).map(source => source.public_id);
+            if (publicIds.length > 0) {
+                 await cloudinary.api.delete_resources(publicIds, { resource_type: 'video' });
+            }
+        }
+        
+        // Firestore se document delete karein
+        await movieRef.delete();
+        
+        res.status(200).send(`Movie ID: ${movieId} safaltapoorvak delete ho gayi.`);
+    } catch(error) {
+        console.error("Error deleting movie: ", error);
+        res.status(500).send("Server par movie delete karte samay error aayi.");
+    }
+});
+
+// 4. Server ko start karein
+const PORT = 3000;
+app.listen(PORT, () => {
+    console.log(`Backend server http://localhost:${PORT} par chal raha hai`);
+});
